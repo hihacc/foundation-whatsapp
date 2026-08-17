@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # 1. Redis Broker for BullMQ
+  redis:
+    image: redis:7-alpine
+    container_name: tfc-whatsapp-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # 2. TFC WhatsApp API (Control Plane)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tfc-whatsapp-api
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - DATABASE_URL=${DATABASE_URL}
+      - DIRECT_URL=${DIRECT_URL}
+      - REDIS_URL=redis://redis:6379
+      - TFC_SERVICE_API_KEY=${TFC_SERVICE_API_KEY}
+      - WHATSAPP_SESSION_ENCRYPTION_KEY=${WHATSAPP_SESSION_ENCRYPTION_KEY}
+      - LOG_LEVEL=info
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # 3. Persistent Baileys Worker
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: tfc-whatsapp-worker
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+      - DIRECT_URL=${DIRECT_URL}
+      - REDIS_URL=redis://redis:6379
+      - WHATSAPP_SESSION_ENCRYPTION_KEY=${WHATSAPP_SESSION_ENCRYPTION_KEY}
+      - LOG_LEVEL=info
+      - SESSIONS_STORAGE_DIR=/app/data/sessions
+    volumes:
+      - whatsapp_sessions:/app/data/sessions
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  whatsapp_sessions:

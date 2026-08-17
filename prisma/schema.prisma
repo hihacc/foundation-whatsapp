@@ -1,0 +1,227 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum AccountStatus {
+  DISCONNECTED
+  CONNECTING
+  SCAN_QR
+  CONNECTED
+  BANNED
+}
+
+enum SessionStatus {
+  INACTIVE
+  PENDING_QR
+  AUTHENTICATED
+  EXPIRED
+}
+
+enum MessageStatus {
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  CANCELLED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  DOCUMENT
+  TEMPLATE
+  LOCATION
+}
+
+enum AutomationTriggerType {
+  ADMISSION_CONFIRMATION
+  FEE_DUE_REMINDER
+  ATTENDANCE_ALERT
+  RESULT_NOTIFICATION
+  ANNOUNCEMENT
+  CUSTOM_EVENT
+}
+
+model WhatsAppAccount {
+  id           String        @id @default(uuid())
+  name         String
+  phoneNumber  String?       @map("phone_number")
+  status       AccountStatus @default(DISCONNECTED)
+  connected    Boolean       @default(false)
+  qrCode       String?       @map("qr_code")
+  lastSeenAt   DateTime?     @map("last_seen_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  sessions          WhatsAppSession[]
+  contacts          Contact[]
+  messages          Message[]
+  scheduledMessages ScheduledMessage[]
+  automationRules   AutomationRule[]
+  incomingMessages  IncomingMessage[]
+
+  @@map("whatsapp_accounts")
+}
+
+model WhatsAppSession {
+  id                        String        @id @default(uuid())
+  accountId                 String        @map("account_id")
+  sessionStatus             SessionStatus @default(INACTIVE) @map("session_status")
+  sessionStoragePath        String?       @map("session_storage_path")
+  encryptedSessionReference String?       @map("encrypted_session_reference")
+  lastConnectedAt           DateTime?     @map("last_connected_at")
+  lastDisconnectedAt        DateTime?     @map("last_disconnected_at")
+  createdAt                 DateTime      @default(now()) @map("created_at")
+  updatedAt                 DateTime      @updatedAt @map("updated_at")
+
+  account WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_sessions")
+}
+
+model Contact {
+  id          String   @id @default(uuid())
+  accountId   String   @map("account_id")
+  name        String
+  phoneNumber String   @map("phone_number")
+  metadata    Json?    @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  account  WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@unique([accountId, phoneNumber])
+  @@map("contacts")
+}
+
+model Message {
+  id                String        @id @default(uuid())
+  accountId         String        @map("account_id")
+  contactId         String?       @map("contact_id")
+  recipient         String
+  messageType       MessageType   @default(TEXT) @map("message_type")
+  messageBody       String        @map("message_body")
+  status            MessageStatus @default(QUEUED)
+  providerMessageId String?       @map("provider_message_id")
+  scheduledAt       DateTime?     @map("scheduled_at")
+  sentAt            DateTime?     @map("sent_at")
+  failedAt          DateTime?     @map("failed_at")
+  errorMessage      String?       @map("error_message")
+  retryCount        Int           @default(0) @map("retry_count")
+  metadata          Json?         @default("{}")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  account  WhatsAppAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contact  Contact?         @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  attempts MessageAttempt[]
+
+  @@index([accountId, status])
+  @@index([recipient])
+  @@map("messages")
+}
+
+model MessageAttempt {
+  id           String    @id @default(uuid())
+  messageId    String    @map("message_id")
+  attemptNumber Int      @map("attempt_number")
+  status       MessageStatus
+  responsePayload Json?  @map("response_payload")
+  errorMessage String?   @map("error_message")
+  attemptedAt  DateTime  @default(now()) @map("attempted_at")
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@map("message_attempts")
+}
+
+model ScheduledMessage {
+  id          String        @id @default(uuid())
+  accountId   String        @map("account_id")
+  recipient   String
+  messageBody String        @map("message_body")
+  scheduledAt DateTime      @map("scheduled_at")
+  status      MessageStatus @default(QUEUED)
+  metadata    Json?         @default("{}")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  account WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("scheduled_messages")
+}
+
+model AutomationRule {
+  id          String                @id @default(uuid())
+  accountId   String                @map("account_id")
+  triggerType AutomationTriggerType @map("trigger_type")
+  name        String
+  template    String
+  isActive    Boolean               @default(true) @map("is_active")
+  conditions  Json?                 @default("{}")
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @updatedAt @map("updated_at")
+
+  account WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("automation_rules")
+}
+
+model IncomingMessage {
+  id                String   @id @default(uuid())
+  accountId         String   @map("account_id")
+  senderPhoneNumber String   @map("sender_phone_number")
+  messageBody       String   @map("message_body")
+  messageType       String   @default("text") @map("message_type")
+  rawPayload        Json?    @map("raw_payload")
+  receivedAt        DateTime @default(now()) @map("received_at")
+
+  account WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("incoming_messages")
+}
+
+model WebhookEvent {
+  id        String   @id @default(uuid())
+  eventType String   @map("event_type")
+  payload   Json
+  processed Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("webhook_events")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  action     String
+  actor      String
+  targetType String?  @map("target_type")
+  targetId   String?  @map("target_id")
+  details    Json?
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("audit_logs")
+}
+
+model ApiClient {
+  id         String   @id @default(uuid())
+  name       String
+  apiKeyHash String   @unique @map("api_key_hash")
+  isActive   Boolean  @default(true) @map("is_active")
+  rateLimit  Int      @default(120) @map("rate_limit") // requests per minute
+  lastUsedAt DateTime? @map("last_used_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("api_clients")
+}
